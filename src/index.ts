@@ -27,6 +27,14 @@ const server = new Server(
   }
 );
 
+const customerIdProp = {
+  customerId: {
+    type: 'string',
+    description:
+      'Google Ads customer (account) ID for this request. Omit to use GOOGLE_ADS_CUSTOMER_ID from the server environment.',
+  },
+} as const;
+
 // Define only working tools
 const workingTools = [
   {
@@ -35,6 +43,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         limit: { type: 'number', description: 'Maximum number of campaigns to return' },
         includeRemoved: { type: 'boolean', description: 'Include removed campaigns' },
       },
@@ -46,6 +55,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         name: { type: 'string', description: 'Campaign name' },
         budget: { type: 'number', description: 'Daily budget in account currency' },
         advertisingChannelType: { 
@@ -64,6 +74,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         campaignId: { type: 'string', description: 'Campaign ID' },
         name: { type: 'string', description: 'New campaign name' },
         status: { type: 'string', enum: ['ENABLED', 'PAUSED', 'REMOVED'], description: 'New campaign status' },
@@ -78,6 +89,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         campaignId: { type: 'string', description: 'Filter by campaign ID (optional)' },
         limit: { type: 'number', description: 'Maximum number of ad groups to return' },
         includeRemoved: { type: 'boolean', description: 'Include removed ad groups' },
@@ -90,6 +102,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         adGroupId: { type: 'string', description: 'Ad group ID' },
       },
       required: ['adGroupId'],
@@ -101,6 +114,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         campaignId: { type: 'string', description: 'Campaign ID' },
         name: { type: 'string', description: 'Ad group name' },
         status: { type: 'string', enum: ['ENABLED', 'PAUSED'], description: 'Initial status' },
@@ -115,6 +129,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         adGroupId: { type: 'string', description: 'Ad group ID' },
         name: { type: 'string', description: 'New name' },
         status: { type: 'string', enum: ['ENABLED', 'PAUSED', 'REMOVED'], description: 'New status' },
@@ -129,6 +144,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         adGroupId: { type: 'string', description: 'Filter by ad group ID' },
         campaignId: { type: 'string', description: 'Filter by campaign ID' },
         limit: { type: 'number', description: 'Maximum number of ads to return' },
@@ -142,6 +158,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         adGroupId: { type: 'string', description: 'Ad group ID' },
         keywords: {
           type: 'array',
@@ -165,6 +182,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         campaignId: { type: 'string', description: 'Campaign ID for campaign-level negatives' },
         adGroupId: { type: 'string', description: 'Ad group ID for ad group-level negatives' },
         keywords: {
@@ -188,6 +206,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         keywordId: { type: 'string', description: 'Keyword ID' },
         adGroupId: { type: 'string', description: 'Ad group ID' },
         status: { type: 'string', enum: ['ENABLED', 'PAUSED', 'REMOVED'], description: 'New status' },
@@ -202,6 +221,7 @@ const workingTools = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...customerIdProp,
         campaignId: { type: 'string', description: 'Filter by campaign ID' },
         adGroupId: { type: 'string', description: 'Filter by ad group ID' },
         dateRange: { 

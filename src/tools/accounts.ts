@@ -1,24 +1,24 @@
 import { z } from 'zod';
 import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { customerIdOptional } from '../schema-common.js';
 
-export const listAccessibleCustomersSchema = z.object({});
+export const listAccessibleCustomersSchema = customerIdOptional;
 
-export const getAccountHierarchySchema = z.object({
-  customerId: z.string().optional(),
-  loginCustomerId: z.string().optional(),
-});
+export const getAccountHierarchySchema = customerIdOptional.merge(
+  z.object({
+    loginCustomerId: z.string().optional(),
+  })
+);
 
 export const getAccountInfoSchema = z.object({
   customerId: z.string(),
 });
 
-export const listManagerAccountsSchema = z.object({
-  customerId: z.string().optional(),
-});
+export const listManagerAccountsSchema = customerIdOptional;
 
 export async function listAccessibleCustomers(args: z.infer<typeof listAccessibleCustomersSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     // google-ads-api doesn't have a direct listAccessibleCustomers method
@@ -49,7 +49,7 @@ export async function listAccessibleCustomers(args: z.infer<typeof listAccessibl
 }
 
 export async function getAccountHierarchy(args: z.infer<typeof getAccountHierarchySchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     const query = `
@@ -82,7 +82,7 @@ export async function getAccountHierarchy(args: z.infer<typeof getAccountHierarc
 }
 
 export async function getAccountInfo(args: z.infer<typeof getAccountInfoSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     const query = `
@@ -123,13 +123,13 @@ export async function getAccountInfo(args: z.infer<typeof getAccountInfoSchema>)
 }
 
 export async function listManagerAccounts(args: z.infer<typeof listManagerAccountsSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     const query = `
       SELECT 
+        customer_manager_link.resource_name,
         customer_manager_link.manager_customer,
-        customer_manager_link.client_customer,
         customer_manager_link.status
       FROM customer_manager_link
       WHERE customer_manager_link.status = 'ACTIVE'
@@ -137,11 +137,16 @@ export async function listManagerAccounts(args: z.infer<typeof listManagerAccoun
     
     const response = await client.query(query);
     
-    return response.map(row => ({
-      managerCustomer: row.customer_manager_link?.manager_customer,
-      clientCustomer: row.customer_manager_link?.client_customer,
-      status: row.customer_manager_link?.status
-    }));
+    return response.map(row => {
+      const link = row.customer_manager_link;
+      const rn = link?.resource_name;
+      const clientId = rn?.match(/^customers\/(\d+)\/customerManagerLinks\//)?.[1];
+      return {
+        managerCustomer: link?.manager_customer,
+        clientCustomer: clientId ? `customers/${clientId}` : undefined,
+        status: link?.status,
+      };
+    });
   } catch (error) {
     throw new Error(`Failed to list manager accounts: ${error.message}`);
   }

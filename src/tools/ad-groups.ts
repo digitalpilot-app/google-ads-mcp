@@ -1,12 +1,14 @@
 import { z } from 'zod';
+import { resources } from 'google-ads-api';
 import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { customerIdOptional } from '../schema-common.js';
 
 export const listAdGroupsSchema = z.object({
   campaignId: z.string().optional(),
   limit: z.number().optional().default(100),
   includeRemoved: z.boolean().optional().default(false),
-});
+}).merge(customerIdOptional);
 
 export const createAdGroupSchema = z.object({
   campaignId: z.string(),
@@ -16,7 +18,7 @@ export const createAdGroupSchema = z.object({
   cpmBidMicros: z.number().optional(),
   targetCpaMicros: z.number().optional(),
   targetRoas: z.number().optional(),
-});
+}).merge(customerIdOptional);
 
 export const updateAdGroupSchema = z.object({
   adGroupId: z.string(),
@@ -26,11 +28,11 @@ export const updateAdGroupSchema = z.object({
   cpmBidMicros: z.number().optional(),
   targetCpaMicros: z.number().optional(),
   targetRoas: z.number().optional(),
-});
+}).merge(customerIdOptional);
 
 export const getAdGroupSchema = z.object({
   adGroupId: z.string(),
-});
+}).merge(customerIdOptional);
 
 function microsToNumber(micros: string | number | undefined): number | undefined {
   if (micros === undefined || micros === null) return undefined;
@@ -38,7 +40,7 @@ function microsToNumber(micros: string | number | undefined): number | undefined
 }
 
 export async function listAdGroups(args: z.infer<typeof listAdGroupsSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     let query = `
@@ -102,25 +104,21 @@ export async function listAdGroups(args: z.infer<typeof listAdGroupsSchema>) {
 }
 
 export async function createAdGroup(args: z.infer<typeof createAdGroupSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
-    const adGroupOperation = {
-      create: {
-        campaign: `customers/${client.getCustomerId()}/campaigns/${args.campaignId}`,
+    const cid = client.credentials.customer_id;
+    const response = await client.adGroups.create([
+      {
+        campaign: `customers/${cid}/campaigns/${args.campaignId}`,
         name: args.name,
         status: args.status,
         cpc_bid_micros: args.cpcBidMicros,
         cpm_bid_micros: args.cpmBidMicros,
         target_cpa_micros: args.targetCpaMicros,
         target_roas: args.targetRoas,
-      }
-    };
-    
-    const response = await client.adGroupService.mutateAdGroups({
-      customer_id: client.getCustomerId(),
-      operations: [adGroupOperation],
-    });
+      },
+    ]);
     
     const result = response.results?.[0];
     const adGroupId = result?.resource_name?.split('/').pop();
@@ -136,56 +134,39 @@ export async function createAdGroup(args: z.infer<typeof createAdGroupSchema>) {
 }
 
 export async function updateAdGroup(args: z.infer<typeof updateAdGroupSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
-    const updateObject: any = {
-      resource_name: `customers/${client.getCustomerId()}/adGroups/${args.adGroupId}`,
+    const cid = client.credentials.customer_id;
+    const updateObject: Record<string, unknown> = {
+      resource_name: `customers/${cid}/adGroups/${args.adGroupId}`,
     };
-    
-    const updateMask = [];
     
     if (args.name !== undefined) {
       updateObject.name = args.name;
-      updateMask.push('name');
     }
     
     if (args.status !== undefined) {
       updateObject.status = args.status;
-      updateMask.push('status');
     }
     
     if (args.cpcBidMicros !== undefined) {
       updateObject.cpc_bid_micros = args.cpcBidMicros;
-      updateMask.push('cpc_bid_micros');
     }
     
     if (args.cpmBidMicros !== undefined) {
       updateObject.cpm_bid_micros = args.cpmBidMicros;
-      updateMask.push('cpm_bid_micros');
     }
     
     if (args.targetCpaMicros !== undefined) {
       updateObject.target_cpa_micros = args.targetCpaMicros;
-      updateMask.push('target_cpa_micros');
     }
     
     if (args.targetRoas !== undefined) {
       updateObject.target_roas = args.targetRoas;
-      updateMask.push('target_roas');
     }
     
-    const adGroupOperation = {
-      update: updateObject,
-      update_mask: {
-        paths: updateMask,
-      },
-    };
-    
-    const response = await client.adGroupService.mutateAdGroups({
-      customer_id: client.getCustomerId(),
-      operations: [adGroupOperation],
-    });
+    const response = await client.adGroups.update([updateObject as resources.IAdGroup]);
     
     return {
       success: true,
@@ -197,7 +178,7 @@ export async function updateAdGroup(args: z.infer<typeof updateAdGroupSchema>) {
 }
 
 export async function getAdGroup(args: z.infer<typeof getAdGroupSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     const query = `

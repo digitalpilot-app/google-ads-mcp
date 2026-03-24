@@ -1,13 +1,16 @@
 import { z } from 'zod';
+import { resources } from 'google-ads-api';
 import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { conversionRateFromMetrics } from '../metrics-helpers.js';
+import { customerIdOptional } from '../schema-common.js';
 
 export const listAdsSchema = z.object({
   adGroupId: z.string().optional(),
   campaignId: z.string().optional(),
   limit: z.number().optional().default(100),
   includeRemoved: z.boolean().optional().default(false),
-});
+}).merge(customerIdOptional);
 
 export const createResponsiveSearchAdSchema = z.object({
   adGroupId: z.string(),
@@ -24,13 +27,13 @@ export const createResponsiveSearchAdSchema = z.object({
   finalUrls: z.array(z.string()).min(1),
   finalMobileUrls: z.array(z.string()).optional(),
   trackingUrlTemplate: z.string().optional(),
-});
+}).merge(customerIdOptional);
 
 export const updateAdSchema = z.object({
   adId: z.string(),
   adGroupId: z.string(),
   status: z.enum(['ENABLED', 'PAUSED', 'REMOVED']).optional(),
-});
+}).merge(customerIdOptional);
 
 export const getAdPerformanceSchema = z.object({
   adId: z.string(),
@@ -44,7 +47,7 @@ export const getAdPerformanceSchema = z.object({
     'LAST_MONTH',
     'ALL_TIME'
   ]).optional().default('LAST_30_DAYS'),
-});
+}).merge(customerIdOptional);
 
 function microsToNumber(micros: string | number | undefined): number | undefined {
   if (micros === undefined || micros === null) return undefined;
@@ -52,7 +55,7 @@ function microsToNumber(micros: string | number | undefined): number | undefined
 }
 
 export async function listAds(args: z.infer<typeof listAdsSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     let query = `
@@ -130,37 +133,33 @@ export async function listAds(args: z.infer<typeof listAdsSchema>) {
 }
 
 export async function createResponsiveSearchAd(args: z.infer<typeof createResponsiveSearchAdSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
-    const adOperation = {
-      create: {
-        ad_group: `customers/${client.getCustomerId()}/adGroups/${args.adGroupId}`,
-        status: 'ENABLED',
-        ad: {
-          responsive_search_ad: {
-            headlines: args.headlines.map(headline => ({
-              text: headline.text,
-              pinned_field: headline.pinned_field,
-            })),
-            descriptions: args.descriptions.map(description => ({
-              text: description.text,
-              pinned_field: description.pinned_field,
-            })),
-            path1: args.path1,
-            path2: args.path2,
-          },
-          final_urls: args.finalUrls,
-          final_mobile_urls: args.finalMobileUrls,
-          tracking_url_template: args.trackingUrlTemplate,
+    const cid = client.credentials.customer_id;
+    const adGroupAd: resources.IAdGroupAd = {
+      ad_group: `customers/${cid}/adGroups/${args.adGroupId}`,
+      status: 'ENABLED',
+      ad: {
+        responsive_search_ad: {
+          headlines: args.headlines.map(headline => ({
+            text: headline.text,
+            pinned_field: headline.pinned_field,
+          })),
+          descriptions: args.descriptions.map(description => ({
+            text: description.text,
+            pinned_field: description.pinned_field,
+          })),
+          path1: args.path1,
+          path2: args.path2,
         },
+        final_urls: args.finalUrls,
+        final_mobile_urls: args.finalMobileUrls,
+        tracking_url_template: args.trackingUrlTemplate,
       },
     };
     
-    const response = await client.adGroupAdService.mutateAdGroupAds({
-      customer_id: client.getCustomerId(),
-      operations: [adOperation],
-    });
+    const response = await client.adGroupAds.create([adGroupAd]);
     
     const result = response.results?.[0];
     const adId = result?.resource_name?.split('~').pop();
@@ -176,25 +175,18 @@ export async function createResponsiveSearchAd(args: z.infer<typeof createRespon
 }
 
 export async function updateAd(args: z.infer<typeof updateAdSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
-    const resourceName = `customers/${client.getCustomerId()}/adGroupAds/${args.adGroupId}~${args.adId}`;
+    const cid = client.credentials.customer_id;
+    const resourceName = `customers/${cid}/adGroupAds/${args.adGroupId}~${args.adId}`;
     
-    const adOperation = {
-      update: {
+    const response = await client.adGroupAds.update([
+      {
         resource_name: resourceName,
         status: args.status,
-      },
-      update_mask: {
-        paths: ['status'],
-      },
-    };
-    
-    const response = await client.adGroupAdService.mutateAdGroupAds({
-      customer_id: client.getCustomerId(),
-      operations: [adOperation],
-    });
+      } as resources.IAdGroupAd,
+    ]);
     
     return {
       success: true,
@@ -206,7 +198,7 @@ export async function updateAd(args: z.infer<typeof updateAdSchema>) {
 }
 
 export async function getAdPerformance(args: z.infer<typeof getAdPerformanceSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     const dateRangeClause = args.dateRange === 'ALL_TIME' 
@@ -227,7 +219,7 @@ export async function getAdPerformance(args: z.infer<typeof getAdPerformanceSche
         metrics.ctr,
         metrics.average_cpc,
         metrics.average_cpm,
-        metrics.conversion_rate,
+        metrics.conversions_from_interactions_rate,
         metrics.cost_per_conversion,
         metrics.value_per_conversion,
         metrics.all_conversions,
@@ -261,7 +253,7 @@ export async function getAdPerformance(args: z.infer<typeof getAdPerformanceSche
         ctr: row.metrics?.ctr || 0,
         averageCpc: microsToNumber(row.metrics?.average_cpc) || 0,
         averageCpm: microsToNumber(row.metrics?.average_cpm) || 0,
-        conversionRate: row.metrics?.conversion_rate || 0,
+        conversionRate: conversionRateFromMetrics(row.metrics),
         costPerConversion: microsToNumber(row.metrics?.cost_per_conversion) || 0,
         valuePerConversion: microsToNumber(row.metrics?.value_per_conversion) || 0,
         allConversions: row.metrics?.all_conversions || 0,

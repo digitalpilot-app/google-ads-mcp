@@ -15,7 +15,8 @@ const configSchema = z.object({
   clientSecret: z.string().min(1, 'GOOGLE_ADS_CLIENT_SECRET is required'),
   developerToken: z.string().min(1, 'GOOGLE_ADS_DEVELOPER_TOKEN is required'),
   refreshToken: z.string().min(1, 'GOOGLE_ADS_REFRESH_TOKEN is required'),
-  customerId: z.string().min(1, 'GOOGLE_ADS_CUSTOMER_ID is required'),
+  /** Default account when tools omit customerId. Optional if every call passes customerId. */
+  customerId: z.string().optional(),
   loginCustomerId: z.string().optional(),
 });
 
@@ -24,6 +25,6 @@ export const googleAdsConfig = configSchema.parse({
   clientSecret: process.env.GOOGLE_ADS_CLIENT_SECRET,
   developerToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
   refreshToken: process.env.GOOGLE_ADS_REFRESH_TOKEN,
-  customerId: process.env.GOOGLE_ADS_CUSTOMER_ID,
-  loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID,
+  customerId: process.env.GOOGLE_ADS_CUSTOMER_ID?.replace(/\D/g, '') || undefined,
+  loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID?.replace(/\D/g, '') || undefined,
 });

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { conversionRateFromMetrics, microsToUnits } from '../metrics-helpers.js';
+import { customerIdOptional } from '../schema-common.js';
 
 export const listCampaignsSchema = z.object({
   limit: z.number().optional().default(50),
@@ -24,28 +26,28 @@ export const listCampaignsSchema = z.object({
     startDate: z.string().describe('YYYY-MM-DD format'),
     endDate: z.string().describe('YYYY-MM-DD format'),
   }).optional(),
-});
+}).merge(customerIdOptional);
 
 export const getCampaignSchema = z.object({
   campaignId: z.string(),
-});
+}).merge(customerIdOptional);
 
 export const createCampaignSchema = z.object({
   name: z.string(),
   budget: z.number(),
   advertisingChannelType: z.enum(['SEARCH', 'DISPLAY', 'SHOPPING', 'VIDEO', 'MULTI_CHANNEL']),
   status: z.enum(['ENABLED', 'PAUSED']).optional().default('PAUSED'),
-});
+}).merge(customerIdOptional);
 
 export const updateCampaignSchema = z.object({
   campaignId: z.string(),
   name: z.string().optional(),
   status: z.enum(['ENABLED', 'PAUSED', 'REMOVED']).optional(),
   budget: z.number().optional(),
-});
+}).merge(customerIdOptional);
 
 export async function listCampaigns(params: z.infer<typeof listCampaignsSchema>) {
-  const customer = createGoogleAdsClient();
+  const customer = createGoogleAdsClient({ customerId: params.customerId });
   
   // Build WHERE clause
   let whereConditions = [];
@@ -80,7 +82,7 @@ export async function listCampaigns(params: z.infer<typeof listCampaignsSchema>)
       metrics.conversions,
       metrics.ctr,
       metrics.average_cpc,
-      metrics.conversion_rate,
+      metrics.conversions_from_interactions_rate,
       metrics.cost_per_conversion
     FROM campaign
     ${whereClause}
@@ -97,25 +99,25 @@ export async function listCampaigns(params: z.infer<typeof listCampaignsSchema>)
     type: campaign.campaign.advertising_channel_type,
     startDate: campaign.campaign.start_date,
     endDate: campaign.campaign.end_date,
-    budget: campaign.campaign_budget?.amount_micros ? 
-      parseInt(campaign.campaign_budget.amount_micros) / 1_000_000 : null,
+    budget: campaign.campaign_budget?.amount_micros != null
+      ? microsToUnits(campaign.campaign_budget.amount_micros)
+      : null,
     dateRange: params.dateRange,
     metrics: {
       impressions: campaign.metrics?.impressions || 0,
       clicks: campaign.metrics?.clicks || 0,
-      cost: campaign.metrics?.cost_micros ? 
-        parseInt(campaign.metrics.cost_micros) / 1_000_000 : 0,
+      cost: campaign.metrics?.cost_micros != null ? microsToUnits(campaign.metrics.cost_micros) : 0,
       conversions: campaign.metrics?.conversions || 0,
       ctr: campaign.metrics?.ctr || 0,
       avgCpc: campaign.metrics?.average_cpc || 0,
-      conversionRate: campaign.metrics?.conversions_from_interactions_rate || 0,
+      conversionRate: conversionRateFromMetrics(campaign.metrics),
       costPerConversion: campaign.metrics?.cost_per_conversion || 0,
     }
   }));
 }
 
 export async function getCampaign(params: z.infer<typeof getCampaignSchema>) {
-  const customer = createGoogleAdsClient();
+  const customer = createGoogleAdsClient({ customerId: params.customerId });
   
   const query = `
     SELECT
@@ -135,7 +137,7 @@ export async function getCampaign(params: z.infer<typeof getCampaignSchema>) {
       metrics.conversions,
       metrics.ctr,
       metrics.average_cpc,
-      metrics.conversion_rate
+      metrics.conversions_from_interactions_rate
     FROM campaign
     WHERE campaign.id = ${params.campaignId}
   `;
@@ -156,42 +158,56 @@ export async function getCampaign(params: z.infer<typeof getCampaignSchema>) {
     endDate: campaign.campaign.end_date,
     optimizationScore: campaign.campaign.optimization_score,
     budget: {
-      amount: campaign.campaign_budget?.amount_micros ? 
-        parseInt(campaign.campaign_budget.amount_micros) / 1_000_000 : null,
+      amount: campaign.campaign_budget?.amount_micros != null
+        ? microsToUnits(campaign.campaign_budget.amount_micros)
+        : null,
       deliveryMethod: campaign.campaign_budget?.delivery_method,
     },
     metrics: {
       impressions: campaign.metrics?.impressions || 0,
       clicks: campaign.metrics?.clicks || 0,
-      cost: campaign.metrics?.cost_micros ? 
-        parseInt(campaign.metrics.cost_micros) / 1_000_000 : 0,
+      cost: campaign.metrics?.cost_micros != null ? microsToUnits(campaign.metrics.cost_micros) : 0,
       conversions: campaign.metrics?.conversions || 0,
       ctr: campaign.metrics?.ctr || 0,
       avgCpc: campaign.metrics?.average_cpc || 0,
-      conversionRate: campaign.metrics?.conversions_from_interactions_rate || 0,
+      conversionRate: conversionRateFromMetrics(campaign.metrics),
     }
   };
 }
 
 export async function createCampaign(params: z.infer<typeof createCampaignSchema>) {
-  const customer = createGoogleAdsClient();
+  const customer = createGoogleAdsClient({ customerId: params.customerId });
   
-  const budgetResource = await customer.campaignBudgets.create({
-    name: `Budget for ${params.name}`,
-    amount_micros: params.budget * 1_000_000,
-    delivery_method: 'STANDARD',
-  });
+  const budgetResp = await customer.campaignBudgets.create([
+    {
+      name: `Budget for ${params.name}`,
+      amount_micros: params.budget * 1_000_000,
+      delivery_method: 'STANDARD',
+    },
+  ]);
 
-  const campaign = await customer.campaigns.create({
-    name: params.name,
-    status: params.status,
-    advertising_channel_type: params.advertisingChannelType,
-    campaign_budget: budgetResource.resource_name,
-  });
+  const budgetRn = budgetResp.results?.[0]?.resource_name;
+  if (!budgetRn) {
+    throw new Error('Campaign budget create returned no resource_name');
+  }
+
+  const campaignResp = await customer.campaigns.create([
+    {
+      name: params.name,
+      status: params.status,
+      advertising_channel_type: params.advertisingChannelType,
+      campaign_budget: budgetRn,
+    },
+  ]);
+
+  const campResult = campaignResp.results?.[0];
+  const campaignId =
+    campResult?.campaign?.id?.toString() ??
+    campResult?.resource_name?.split('/').pop();
 
   return {
-    id: campaign.id,
-    resourceName: campaign.resource_name,
+    id: campaignId,
+    resourceName: campResult?.resource_name,
     name: params.name,
     status: params.status,
     budget: params.budget,
@@ -199,7 +215,7 @@ export async function createCampaign(params: z.infer<typeof createCampaignSchema
 }
 
 export async function updateCampaign(params: z.infer<typeof updateCampaignSchema>) {
-  const customer = createGoogleAdsClient();
+  const customer = createGoogleAdsClient({ customerId: params.customerId });
   
   const updates: any = {};
   
@@ -220,18 +236,22 @@ export async function updateCampaign(params: z.infer<typeof updateCampaignSchema
     const [campaign] = await customer.query(campaignQuery);
     
     if (campaign?.campaign_budget?.resource_name) {
-      await customer.campaignBudgets.update({
-        resource_name: campaign.campaign_budget.resource_name,
-        amount_micros: params.budget * 1_000_000,
-      });
+      await customer.campaignBudgets.update([
+        {
+          resource_name: campaign.campaign_budget.resource_name,
+          amount_micros: params.budget * 1_000_000,
+        },
+      ]);
     }
   }
   
   if (Object.keys(updates).length > 0) {
-    await customer.campaigns.update({
-      resource_name: `customers/${customer.credentials.customer_id}/campaigns/${params.campaignId}`,
-      ...updates,
-    });
+    await customer.campaigns.update([
+      {
+        resource_name: `customers/${customer.credentials.customer_id}/campaigns/${params.campaignId}`,
+        ...updates,
+      },
+    ]);
   }
   
   return { success: true, campaignId: params.campaignId };

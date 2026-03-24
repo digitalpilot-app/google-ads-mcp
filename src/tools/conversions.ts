@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { resources } from 'google-ads-api';
 import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { customerIdOptional } from '../schema-common.js';
 
 export const listConversionActionsSchema = z.object({
   includeRemoved: z.boolean().optional().default(false),
-});
+}).merge(customerIdOptional);
 
 export const createConversionActionSchema = z.object({
   name: z.string(),
@@ -27,7 +29,7 @@ export const createConversionActionSchema = z.object({
   attributionModel: z.enum(['EXTERNAL', 'GOOGLE_ADS_LAST_CLICK', 'GOOGLE_SEARCH_ATTRIBUTION_FIRST_CLICK', 'GOOGLE_SEARCH_ATTRIBUTION_LINEAR', 'GOOGLE_SEARCH_ATTRIBUTION_TIME_DECAY', 'GOOGLE_SEARCH_ATTRIBUTION_POSITION_BASED', 'GOOGLE_SEARCH_ATTRIBUTION_DATA_DRIVEN']).optional().default('GOOGLE_ADS_LAST_CLICK'),
   clickThroughLookbackWindowDays: z.number().optional().default(30),
   viewThroughLookbackWindowDays: z.number().optional().default(1),
-});
+}).merge(customerIdOptional);
 
 export const updateConversionActionSchema = z.object({
   conversionActionId: z.string(),
@@ -42,7 +44,7 @@ export const updateConversionActionSchema = z.object({
   attributionModel: z.enum(['EXTERNAL', 'GOOGLE_ADS_LAST_CLICK', 'GOOGLE_SEARCH_ATTRIBUTION_FIRST_CLICK', 'GOOGLE_SEARCH_ATTRIBUTION_LINEAR', 'GOOGLE_SEARCH_ATTRIBUTION_TIME_DECAY', 'GOOGLE_SEARCH_ATTRIBUTION_POSITION_BASED', 'GOOGLE_SEARCH_ATTRIBUTION_DATA_DRIVEN']).optional(),
   clickThroughLookbackWindowDays: z.number().optional(),
   viewThroughLookbackWindowDays: z.number().optional(),
-});
+}).merge(customerIdOptional);
 
 export const getConversionStatsSchema = z.object({
   conversionActionId: z.string().optional(),
@@ -56,7 +58,7 @@ export const getConversionStatsSchema = z.object({
     'ALL_TIME'
   ]).optional().default('LAST_30_DAYS'),
   segmentByConversionAction: z.boolean().optional().default(true),
-});
+}).merge(customerIdOptional);
 
 function microsToNumber(micros: string | number | undefined): number | undefined {
   if (micros === undefined || micros === null) return undefined;
@@ -64,7 +66,7 @@ function microsToNumber(micros: string | number | undefined): number | undefined
 }
 
 export async function listConversionActions(args: z.infer<typeof listConversionActionsSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     let query = `
@@ -75,7 +77,7 @@ export async function listConversionActions(args: z.infer<typeof listConversionA
         conversion_action.type,
         conversion_action.status,
         conversion_action.counting_type,
-        conversion_action.attribution_model,
+        conversion_action.attribution_model_settings.attribution_model,
         conversion_action.click_through_lookback_window_days,
         conversion_action.view_through_lookback_window_days,
         conversion_action.value_settings.default_value,
@@ -99,7 +101,7 @@ export async function listConversionActions(args: z.infer<typeof listConversionA
       type: row.conversion_action?.type,
       status: row.conversion_action?.status,
       countingType: row.conversion_action?.counting_type,
-      attributionModel: row.conversion_action?.attribution_model,
+      attributionModel: row.conversion_action?.attribution_model_settings?.attribution_model,
       clickThroughLookbackWindowDays: row.conversion_action?.click_through_lookback_window_days,
       viewThroughLookbackWindowDays: row.conversion_action?.view_through_lookback_window_days,
       valueSettings: {
@@ -118,31 +120,30 @@ export async function listConversionActions(args: z.infer<typeof listConversionA
 }
 
 export async function createConversionAction(args: z.infer<typeof createConversionActionSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
-    const conversionActionOperation = {
-      create: {
-        name: args.name,
-        category: args.category,
-        type: args.type,
-        status: args.status,
-        counting_type: args.countingType,
+    const resource = {
+      name: args.name,
+      category: args.category as resources.IConversionAction['category'],
+      type: args.type as resources.IConversionAction['type'],
+      status: args.status,
+      counting_type: args.countingType,
+      attribution_model_settings: {
         attribution_model: args.attributionModel,
-        click_through_lookback_window_days: args.clickThroughLookbackWindowDays,
-        view_through_lookback_window_days: args.viewThroughLookbackWindowDays,
-        value_settings: args.valueSettings ? {
-          default_value: args.valueSettings.defaultValue,
-          default_currency_code: args.valueSettings.defaultCurrencyCode,
-          always_use_default_value: args.valueSettings.alwaysUseDefaultValue,
-        } : undefined,
       },
+      click_through_lookback_window_days: args.clickThroughLookbackWindowDays,
+      view_through_lookback_window_days: args.viewThroughLookbackWindowDays,
+      value_settings: args.valueSettings
+        ? {
+            default_value: args.valueSettings.defaultValue,
+            default_currency_code: args.valueSettings.defaultCurrencyCode,
+            always_use_default_value: args.valueSettings.alwaysUseDefaultValue,
+          }
+        : undefined,
     };
-    
-    const response = await client.conversionActionService.mutateConversionActions({
-      customer_id: client.getCustomerId(),
-      operations: [conversionActionOperation],
-    });
+
+    const response = await client.conversionActions.create([resource as resources.IConversionAction]);
     
     const result = response.results?.[0];
     const conversionActionId = result?.resource_name?.split('/').pop();
@@ -158,43 +159,38 @@ export async function createConversionAction(args: z.infer<typeof createConversi
 }
 
 export async function updateConversionAction(args: z.infer<typeof updateConversionActionSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
-    const updateObject: any = {
-      resource_name: `customers/${client.getCustomerId()}/conversionActions/${args.conversionActionId}`,
+    const cid = client.credentials.customer_id;
+    const updateObject: resources.IConversionAction = {
+      resource_name: `customers/${cid}/conversionActions/${args.conversionActionId}`,
     };
-    
-    const updateMask = [];
     
     if (args.name !== undefined) {
       updateObject.name = args.name;
-      updateMask.push('name');
     }
     
     if (args.status !== undefined) {
       updateObject.status = args.status;
-      updateMask.push('status');
     }
     
     if (args.countingType !== undefined) {
       updateObject.counting_type = args.countingType;
-      updateMask.push('counting_type');
     }
     
     if (args.attributionModel !== undefined) {
-      updateObject.attribution_model = args.attributionModel;
-      updateMask.push('attribution_model');
+      updateObject.attribution_model_settings = {
+        attribution_model: args.attributionModel,
+      };
     }
     
     if (args.clickThroughLookbackWindowDays !== undefined) {
       updateObject.click_through_lookback_window_days = args.clickThroughLookbackWindowDays;
-      updateMask.push('click_through_lookback_window_days');
     }
     
     if (args.viewThroughLookbackWindowDays !== undefined) {
       updateObject.view_through_lookback_window_days = args.viewThroughLookbackWindowDays;
-      updateMask.push('view_through_lookback_window_days');
     }
     
     if (args.valueSettings !== undefined) {
@@ -203,20 +199,9 @@ export async function updateConversionAction(args: z.infer<typeof updateConversi
         default_currency_code: args.valueSettings.defaultCurrencyCode,
         always_use_default_value: args.valueSettings.alwaysUseDefaultValue,
       };
-      updateMask.push('value_settings.default_value', 'value_settings.default_currency_code', 'value_settings.always_use_default_value');
     }
     
-    const conversionActionOperation = {
-      update: updateObject,
-      update_mask: {
-        paths: updateMask,
-      },
-    };
-    
-    const response = await client.conversionActionService.mutateConversionActions({
-      customer_id: client.getCustomerId(),
-      operations: [conversionActionOperation],
-    });
+    const response = await client.conversionActions.update([updateObject]);
     
     return {
       success: true,
@@ -228,7 +213,7 @@ export async function updateConversionAction(args: z.infer<typeof updateConversi
 }
 
 export async function getConversionStats(args: z.infer<typeof getConversionStatsSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     const dateRangeClause = args.dateRange === 'ALL_TIME' 

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { conversionRateFromMetrics, microsToUnits } from '../metrics-helpers.js';
+import { customerIdOptional } from '../schema-common.js';
 
 export const getAccountPerformanceSchema = z.object({
   dateRange: z.enum([
@@ -22,7 +24,7 @@ export const getAccountPerformanceSchema = z.object({
     endDate: z.string().describe('YYYY-MM-DD format'),
   }).optional(),
   segmentByDate: z.boolean().optional().default(false),
-});
+}).merge(customerIdOptional);
 
 export const getCampaignPerformanceSchema = z.object({
   campaignId: z.string(),
@@ -36,7 +38,7 @@ export const getCampaignPerformanceSchema = z.object({
     'LAST_MONTH'
   ]).optional().default('LAST_30_DAYS'),
   segmentByDate: z.boolean().optional().default(false),
-});
+}).merge(customerIdOptional);
 
 export const getAdGroupPerformanceSchema = z.object({
   adGroupId: z.string().optional(),
@@ -50,7 +52,7 @@ export const getAdGroupPerformanceSchema = z.object({
     'LAST_MONTH'
   ]).optional().default('LAST_30_DAYS'),
   limit: z.number().optional().default(50),
-});
+}).merge(customerIdOptional);
 
 export const getSearchTermsReportSchema = z.object({
   campaignId: z.string().optional(),
@@ -70,10 +72,10 @@ export const getSearchTermsReportSchema = z.object({
   }).optional(),
   limit: z.number().optional().default(100),
   minImpressions: z.number().optional().default(10),
-});
+}).merge(customerIdOptional);
 
 export async function getAccountPerformance(params: z.infer<typeof getAccountPerformanceSchema>) {
-  const customer = createGoogleAdsClient();
+  const customer = createGoogleAdsClient({ customerId: params.customerId });
   
   const segmentClause = params.segmentByDate ? ', segments.date' : '';
   const groupByClause = params.segmentByDate ? 'GROUP BY segments.date' : '';
@@ -91,7 +93,7 @@ export async function getAccountPerformance(params: z.infer<typeof getAccountPer
       metrics.conversions,
       metrics.ctr,
       metrics.average_cpc,
-      metrics.conversion_rate,
+      metrics.conversions_from_interactions_rate,
       metrics.cost_per_conversion,
       metrics.search_impression_share,
       metrics.search_budget_lost_impression_share,
@@ -110,15 +112,14 @@ export async function getAccountPerformance(params: z.infer<typeof getAccountPer
       metrics: {
         impressions: row.metrics?.impressions || 0,
         clicks: row.metrics?.clicks || 0,
-        cost: row.metrics?.cost_micros ? 
-          parseInt(row.metrics.cost_micros) / 1_000_000 : 0,
+        cost: row.metrics?.cost_micros != null ? microsToUnits(row.metrics.cost_micros) : 0,
         conversions: row.metrics?.conversions || 0,
         ctr: row.metrics?.ctr || 0,
-        avgCpc: row.metrics?.average_cpc ? 
-          parseInt(row.metrics.average_cpc) / 1_000_000 : 0,
-        conversionRate: row.metrics?.conversion_rate || 0,
-        costPerConversion: row.metrics?.cost_per_conversion ? 
-          parseInt(row.metrics.cost_per_conversion) / 1_000_000 : 0,
+        avgCpc: row.metrics?.average_cpc != null ? microsToUnits(row.metrics.average_cpc) : 0,
+        conversionRate: conversionRateFromMetrics(row.metrics),
+        costPerConversion: row.metrics?.cost_per_conversion != null
+          ? microsToUnits(row.metrics.cost_per_conversion)
+          : 0,
         impressionShare: row.metrics?.search_impression_share || 0,
         budgetLostImpressionShare: row.metrics?.search_budget_lost_impression_share || 0,
         rankLostImpressionShare: row.metrics?.search_rank_lost_impression_share || 0,
@@ -134,15 +135,14 @@ export async function getAccountPerformance(params: z.infer<typeof getAccountPer
       metrics: {
         impressions: summary.metrics?.impressions || 0,
         clicks: summary.metrics?.clicks || 0,
-        cost: summary.metrics?.cost_micros ? 
-          parseInt(summary.metrics.cost_micros) / 1_000_000 : 0,
+        cost: summary.metrics?.cost_micros != null ? microsToUnits(summary.metrics.cost_micros) : 0,
         conversions: summary.metrics?.conversions || 0,
         ctr: summary.metrics?.ctr || 0,
-        avgCpc: summary.metrics?.average_cpc ? 
-          parseInt(summary.metrics.average_cpc) / 1_000_000 : 0,
-        conversionRate: summary.metrics?.conversion_rate || 0,
-        costPerConversion: summary.metrics?.cost_per_conversion ? 
-          parseInt(summary.metrics.cost_per_conversion) / 1_000_000 : 0,
+        avgCpc: summary.metrics?.average_cpc != null ? microsToUnits(summary.metrics.average_cpc) : 0,
+        conversionRate: conversionRateFromMetrics(summary.metrics),
+        costPerConversion: summary.metrics?.cost_per_conversion != null
+          ? microsToUnits(summary.metrics.cost_per_conversion)
+          : 0,
         impressionShare: summary.metrics?.search_impression_share || 0,
         budgetLostImpressionShare: summary.metrics?.search_budget_lost_impression_share || 0,
         rankLostImpressionShare: summary.metrics?.search_rank_lost_impression_share || 0,
@@ -152,7 +152,7 @@ export async function getAccountPerformance(params: z.infer<typeof getAccountPer
 }
 
 export async function getCampaignPerformance(params: z.infer<typeof getCampaignPerformanceSchema>) {
-  const customer = createGoogleAdsClient();
+  const customer = createGoogleAdsClient({ customerId: params.customerId });
   
   const segmentClause = params.segmentByDate ? ', segments.date' : '';
   const groupByClause = params.segmentByDate ? 'GROUP BY campaign.id, segments.date' : '';
@@ -170,7 +170,7 @@ export async function getCampaignPerformance(params: z.infer<typeof getCampaignP
       metrics.conversions_value,
       metrics.ctr,
       metrics.average_cpc,
-      metrics.conversion_rate,
+      metrics.conversions_from_interactions_rate,
       metrics.cost_per_conversion,
       metrics.value_per_conversion,
       metrics.search_impression_share,
@@ -196,17 +196,18 @@ export async function getCampaignPerformance(params: z.infer<typeof getCampaignP
         metrics: {
           impressions: row.metrics?.impressions || 0,
           clicks: row.metrics?.clicks || 0,
-          cost: row.metrics?.cost_micros ? 
-            parseInt(row.metrics.cost_micros) / 1_000_000 : 0,
+          cost: row.metrics?.cost_micros != null ? microsToUnits(row.metrics.cost_micros) : 0,
           conversions: row.metrics?.conversions || 0,
           conversionsValue: row.metrics?.conversions_value || 0,
           ctr: row.metrics?.ctr || 0,
-          avgCpc: row.metrics?.average_cpc ? 
-            parseInt(row.metrics.average_cpc) / 1_000_000 : 0,
-          conversionRate: row.metrics?.conversion_rate || 0,
-          costPerConversion: row.metrics?.cost_per_conversion ? 
-            parseInt(row.metrics.cost_per_conversion) / 1_000_000 : 0,
-          valuePerConversion: row.metrics?.value_per_conversion || 0,
+          avgCpc: row.metrics?.average_cpc != null ? microsToUnits(row.metrics.average_cpc) : 0,
+          conversionRate: conversionRateFromMetrics(row.metrics),
+          costPerConversion: row.metrics?.cost_per_conversion != null
+            ? microsToUnits(row.metrics.cost_per_conversion)
+            : 0,
+          valuePerConversion: row.metrics?.value_per_conversion != null
+            ? microsToUnits(row.metrics.value_per_conversion)
+            : 0,
           impressionShare: row.metrics?.search_impression_share || 0,
           invalidClicks: row.metrics?.invalid_clicks || 0,
           invalidClickRate: row.metrics?.invalid_click_rate || 0,
@@ -222,17 +223,18 @@ export async function getCampaignPerformance(params: z.infer<typeof getCampaignP
       metrics: {
         impressions: summary.metrics?.impressions || 0,
         clicks: summary.metrics?.clicks || 0,
-        cost: summary.metrics?.cost_micros ? 
-          parseInt(summary.metrics.cost_micros) / 1_000_000 : 0,
+        cost: summary.metrics?.cost_micros != null ? microsToUnits(summary.metrics.cost_micros) : 0,
         conversions: summary.metrics?.conversions || 0,
         conversionsValue: summary.metrics?.conversions_value || 0,
         ctr: summary.metrics?.ctr || 0,
-        avgCpc: summary.metrics?.average_cpc ? 
-          parseInt(summary.metrics.average_cpc) / 1_000_000 : 0,
-        conversionRate: summary.metrics?.conversion_rate || 0,
-        costPerConversion: summary.metrics?.cost_per_conversion ? 
-          parseInt(summary.metrics.cost_per_conversion) / 1_000_000 : 0,
-        valuePerConversion: summary.metrics?.value_per_conversion || 0,
+        avgCpc: summary.metrics?.average_cpc != null ? microsToUnits(summary.metrics.average_cpc) : 0,
+        conversionRate: conversionRateFromMetrics(summary.metrics),
+        costPerConversion: summary.metrics?.cost_per_conversion != null
+          ? microsToUnits(summary.metrics.cost_per_conversion)
+          : 0,
+        valuePerConversion: summary.metrics?.value_per_conversion != null
+          ? microsToUnits(summary.metrics.value_per_conversion)
+          : 0,
         impressionShare: summary.metrics?.search_impression_share || 0,
         budgetLostImpressionShare: summary.metrics?.search_budget_lost_impression_share || 0,
         rankLostImpressionShare: summary.metrics?.search_rank_lost_impression_share || 0,
@@ -244,7 +246,7 @@ export async function getCampaignPerformance(params: z.infer<typeof getCampaignP
 }
 
 export async function getAdGroupPerformance(params: z.infer<typeof getAdGroupPerformanceSchema>) {
-  const customer = createGoogleAdsClient();
+  const customer = createGoogleAdsClient({ customerId: params.customerId });
   
   let whereClause = `WHERE segments.date DURING ${params.dateRange}`;
   
@@ -269,7 +271,7 @@ export async function getAdGroupPerformance(params: z.infer<typeof getAdGroupPer
       metrics.conversions,
       metrics.ctr,
       metrics.average_cpc,
-      metrics.conversion_rate,
+      metrics.conversions_from_interactions_rate,
       metrics.cost_per_conversion
     FROM ad_group
     ${whereClause}
@@ -290,21 +292,20 @@ export async function getAdGroupPerformance(params: z.infer<typeof getAdGroupPer
     metrics: {
       impressions: adGroup.metrics?.impressions || 0,
       clicks: adGroup.metrics?.clicks || 0,
-      cost: adGroup.metrics?.cost_micros ? 
-        parseInt(adGroup.metrics.cost_micros) / 1_000_000 : 0,
+      cost: adGroup.metrics?.cost_micros != null ? microsToUnits(adGroup.metrics.cost_micros) : 0,
       conversions: adGroup.metrics?.conversions || 0,
       ctr: adGroup.metrics?.ctr || 0,
-      avgCpc: adGroup.metrics?.average_cpc ? 
-        parseInt(adGroup.metrics.average_cpc) / 1_000_000 : 0,
-      conversionRate: adGroup.metrics?.conversion_rate || 0,
-      costPerConversion: adGroup.metrics?.cost_per_conversion ? 
-        parseInt(adGroup.metrics.cost_per_conversion) / 1_000_000 : 0,
+      avgCpc: adGroup.metrics?.average_cpc != null ? microsToUnits(adGroup.metrics.average_cpc) : 0,
+      conversionRate: conversionRateFromMetrics(adGroup.metrics),
+      costPerConversion: adGroup.metrics?.cost_per_conversion != null
+        ? microsToUnits(adGroup.metrics.cost_per_conversion)
+        : 0,
     }
   }));
 }
 
 export async function getSearchTermsReport(params: z.infer<typeof getSearchTermsReportSchema>) {
-  const customer = createGoogleAdsClient();
+  const customer = createGoogleAdsClient({ customerId: params.customerId });
   
   let dateClause = '';
   if (params.dateRange === 'CUSTOM' && params.customDateRange) {
@@ -338,7 +339,7 @@ export async function getSearchTermsReport(params: z.infer<typeof getSearchTerms
       metrics.conversions,
       metrics.ctr,
       metrics.average_cpc,
-      metrics.conversion_rate
+      metrics.conversions_from_interactions_rate
     FROM search_term_view
     ${whereClause}
     ORDER BY metrics.impressions DESC
@@ -361,13 +362,11 @@ export async function getSearchTermsReport(params: z.infer<typeof getSearchTerms
     metrics: {
       impressions: term.metrics?.impressions || 0,
       clicks: term.metrics?.clicks || 0,
-      cost: term.metrics?.cost_micros ? 
-        parseInt(term.metrics.cost_micros) / 1_000_000 : 0,
+      cost: term.metrics?.cost_micros != null ? microsToUnits(term.metrics.cost_micros) : 0,
       conversions: term.metrics?.conversions || 0,
       ctr: term.metrics?.ctr || 0,
-      avgCpc: term.metrics?.average_cpc ? 
-        parseInt(term.metrics.average_cpc) / 1_000_000 : 0,
-      conversionRate: term.metrics?.conversion_rate || 0,
+      avgCpc: term.metrics?.average_cpc != null ? microsToUnits(term.metrics.average_cpc) : 0,
+      conversionRate: conversionRateFromMetrics(term.metrics),
     }
   }));
 }

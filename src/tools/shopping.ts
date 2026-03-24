@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { conversionRateFromMetrics } from '../metrics-helpers.js';
+import { customerIdOptional } from '../schema-common.js';
 
 export const getProductPerformanceSchema = z.object({
   campaignId: z.string().optional(),
@@ -16,7 +18,7 @@ export const getProductPerformanceSchema = z.object({
   limit: z.number().optional().default(100),
   orderBy: z.enum(['COST', 'CLICKS', 'CONVERSIONS', 'REVENUE', 'ROAS']).optional().default('COST'),
   orderDirection: z.enum(['ASC', 'DESC']).optional().default('DESC'),
-});
+}).merge(customerIdOptional);
 
 export const getProductPartitionPerformanceSchema = z.object({
   adGroupId: z.string(),
@@ -29,7 +31,7 @@ export const getProductPartitionPerformanceSchema = z.object({
     'LAST_MONTH',
     'ALL_TIME'
   ]).optional().default('LAST_30_DAYS'),
-});
+}).merge(customerIdOptional);
 
 export const getTopBottomProductsSchema = z.object({
   metric: z.enum(['COST', 'CLICKS', 'CONVERSIONS', 'REVENUE', 'ROAS', 'CTR', 'CONVERSION_RATE']),
@@ -44,7 +46,7 @@ export const getTopBottomProductsSchema = z.object({
   topCount: z.number().optional().default(10),
   bottomCount: z.number().optional().default(10),
   campaignId: z.string().optional(),
-});
+}).merge(customerIdOptional);
 
 function microsToNumber(micros: string | number | undefined): number | undefined {
   if (micros === undefined || micros === null) return undefined;
@@ -52,7 +54,7 @@ function microsToNumber(micros: string | number | undefined): number | undefined
 }
 
 export async function getProductPerformance(args: z.infer<typeof getProductPerformanceSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     const dateRangeClause = args.dateRange === 'ALL_TIME' 
@@ -79,7 +81,7 @@ export async function getProductPerformance(args: z.infer<typeof getProductPerfo
         metrics.conversions_value,
         metrics.ctr,
         metrics.average_cpc,
-        metrics.conversion_rate,
+        metrics.conversions_from_interactions_rate,
         metrics.cost_per_conversion,
         metrics.value_per_conversion
       FROM shopping_performance_view
@@ -141,7 +143,7 @@ export async function getProductPerformance(args: z.infer<typeof getProductPerfo
         revenue: microsToNumber(row.metrics?.conversions_value) || 0,
         ctr: row.metrics?.ctr || 0,
         averageCpc: microsToNumber(row.metrics?.average_cpc) || 0,
-        conversionRate: row.metrics?.conversion_rate || 0,
+        conversionRate: conversionRateFromMetrics(row.metrics),
         costPerConversion: microsToNumber(row.metrics?.cost_per_conversion) || 0,
         valuePerConversion: microsToNumber(row.metrics?.value_per_conversion) || 0,
         roas: row.metrics?.conversions_value && row.metrics?.cost_micros 
@@ -155,7 +157,7 @@ export async function getProductPerformance(args: z.infer<typeof getProductPerfo
 }
 
 export async function getProductPartitionPerformance(args: z.infer<typeof getProductPartitionPerformanceSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     const dateRangeClause = args.dateRange === 'ALL_TIME' 
@@ -180,7 +182,7 @@ export async function getProductPartitionPerformance(args: z.infer<typeof getPro
         metrics.conversions_value,
         metrics.ctr,
         metrics.average_cpc,
-        metrics.conversion_rate
+        metrics.conversions_from_interactions_rate
       FROM ad_group_criterion
       WHERE ad_group.id = ${args.adGroupId}
         AND ad_group_criterion.type = 'LISTING_GROUP'
@@ -207,7 +209,7 @@ export async function getProductPartitionPerformance(args: z.infer<typeof getPro
         revenue: microsToNumber(row.metrics?.conversions_value) || 0,
         ctr: row.metrics?.ctr || 0,
         averageCpc: microsToNumber(row.metrics?.average_cpc) || 0,
-        conversionRate: row.metrics?.conversion_rate || 0,
+        conversionRate: conversionRateFromMetrics(row.metrics),
         roas: row.metrics?.conversions_value && row.metrics?.cost_micros 
           ? (Number(row.metrics.conversions_value) / Number(row.metrics.cost_micros)) 
           : 0,
@@ -219,7 +221,7 @@ export async function getProductPartitionPerformance(args: z.infer<typeof getPro
 }
 
 export async function getTopBottomProducts(args: z.infer<typeof getTopBottomProductsSchema>) {
-  const client = createGoogleAdsClient();
+  const client = createGoogleAdsClient({ customerId: args.customerId });
   
   try {
     const dateRangeClause = ` DURING ${args.dateRange}`;
@@ -249,7 +251,7 @@ export async function getTopBottomProducts(args: z.infer<typeof getTopBottomProd
         selectField = 'ctr';
         break;
       case 'CONVERSION_RATE':
-        orderByField = 'metrics.conversion_rate';
+        orderByField = 'metrics.conversions_from_interactions_rate';
         selectField = 'conversionRate';
         break;
     }
@@ -266,7 +268,7 @@ export async function getTopBottomProducts(args: z.infer<typeof getTopBottomProd
         metrics.conversions,
         metrics.conversions_value,
         metrics.ctr,
-        metrics.conversion_rate
+        metrics.conversions_from_interactions_rate
       FROM shopping_performance_view
     `;
     
@@ -296,7 +298,7 @@ export async function getTopBottomProducts(args: z.infer<typeof getTopBottomProd
         conversions: row.metrics?.conversions || 0,
         revenue: microsToNumber(row.metrics?.conversions_value) || 0,
         ctr: row.metrics?.ctr || 0,
-        conversionRate: row.metrics?.conversion_rate || 0,
+        conversionRate: conversionRateFromMetrics(row.metrics),
         roas: row.metrics?.conversions_value && row.metrics?.cost_micros 
           ? (Number(row.metrics.conversions_value) / Number(row.metrics.cost_micros)) 
           : 0,
