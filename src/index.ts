@@ -14,6 +14,14 @@ import { addKeywords, addNegativeKeywords, updateKeyword, addKeywordsSchema, add
 import { getSearchTermsReport, getSearchTermsReportSchema } from './tools/performance.js';
 import { listAdGroups, createAdGroup, updateAdGroup, getAdGroup, listAdGroupsSchema, createAdGroupSchema, updateAdGroupSchema, getAdGroupSchema } from './tools/ad-groups.js';
 import { listAds, listAdsSchema } from './tools/ads.js';
+import {
+  generateKeywordIdeas,
+  generateKeywordHistoricalMetrics,
+  generateForecastMetrics,
+  generateKeywordIdeasSchema,
+  generateKeywordHistoricalMetricsSchema,
+  generateForecastMetricsSchema,
+} from './tools/keyword-planning.js';
 
 const server = new Server(
   {
@@ -243,6 +251,92 @@ const workingTools = [
       },
     },
   },
+  {
+    name: 'generate_keyword_ideas',
+    description:
+      'Keyword Plan Idea: discover new keywords (maps to KeywordPlanIdeaService.GenerateKeywordIdeas). Use seedType with keywords (1–20), url, site, or keyword_and_url.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...customerIdProp,
+        seedType: {
+          type: 'string',
+          enum: ['keyword', 'url', 'site', 'keyword_and_url'],
+          description: 'Seed type: keyword list, single URL, site, or keywords+URL together',
+        },
+        keywords: { type: 'array', items: { type: 'string' }, description: '1–20 keywords when seedType is keyword or keyword_and_url' },
+        url: { type: 'string', description: 'URL when seedType is url or keyword_and_url' },
+        site: { type: 'string', description: 'Site host when seedType is site' },
+        geoTargetConstants: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Up to 10 geo target resource names, e.g. geoTargetConstants/2840; omit or [] for all geos',
+        },
+        language: { type: 'string', description: 'e.g. languageConstants/1000' },
+        keywordPlanNetwork: {
+          type: 'string',
+          enum: ['GOOGLE_SEARCH', 'GOOGLE_SEARCH_AND_PARTNERS'],
+        },
+        includeAdultKeywords: { type: 'boolean' },
+        pageSize: { type: 'number' },
+        pageToken: { type: 'string' },
+        historicalMetricsOptions: { type: 'object', additionalProperties: true },
+      },
+      required: ['seedType'],
+    },
+  },
+  {
+    name: 'generate_keyword_historical_metrics',
+    description:
+      'Keyword Plan Idea: search volume, CPC, competition for a known keyword list (KeywordPlanIdeaService.GenerateKeywordHistoricalMetrics).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...customerIdProp,
+        keywords: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Up to 10,000 keywords',
+        },
+        geoTargetConstants: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Up to 10 location resource names',
+        },
+        language: { type: 'string' },
+        keywordPlanNetwork: {
+          type: 'string',
+          enum: ['GOOGLE_SEARCH', 'GOOGLE_SEARCH_AND_PARTNERS'],
+        },
+        includeAdultKeywords: { type: 'boolean' },
+        historicalMetricsOptions: { type: 'object', additionalProperties: true },
+        aggregateMetrics: { type: 'object', additionalProperties: true },
+      },
+      required: ['keywords'],
+    },
+  },
+  {
+    name: 'generate_forecast_metrics',
+    description:
+      'Keyword Plan Idea: traffic/conversion forecasts for a proposed Search campaign (KeywordPlanIdeaService.GenerateKeywordForecastMetrics). Pass campaign as CampaignToForecast (snake_case keys): keyword_plan_network, bidding_strategy, language_constants, ad_groups with biddable_keywords, etc.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...customerIdProp,
+        campaign: { type: 'object', description: 'CampaignToForecast JSON (snake_case field names)', additionalProperties: true },
+        currencyCode: { type: 'string', description: 'Optional; defaults to account currency' },
+        forecastPeriod: {
+          type: 'object',
+          properties: {
+            startDate: { type: 'string', description: 'YYYY-MM-DD' },
+            endDate: { type: 'string', description: 'YYYY-MM-DD' },
+          },
+          required: ['startDate', 'endDate'],
+        },
+      },
+      required: ['campaign'],
+    },
+  },
 ];
 
 const allTools = workingTools;
@@ -289,6 +383,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const getSearchTermsReportArgs = getSearchTermsReportSchema.parse(args);
         return { content: [{ type: 'text', text: JSON.stringify(await getSearchTermsReport(getSearchTermsReportArgs), null, 2) }] };
 
+      case 'generate_keyword_ideas':
+        const generateKeywordIdeasArgs = generateKeywordIdeasSchema.parse(args);
+        return {
+          content: [
+            { type: 'text', text: JSON.stringify(await generateKeywordIdeas(generateKeywordIdeasArgs), null, 2) },
+          ],
+        };
+
+      case 'generate_keyword_historical_metrics':
+        const generateKeywordHistoricalMetricsArgs = generateKeywordHistoricalMetricsSchema.parse(args);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(await generateKeywordHistoricalMetrics(generateKeywordHistoricalMetricsArgs), null, 2),
+            },
+          ],
+        };
+
+      case 'generate_forecast_metrics':
+        const generateForecastMetricsArgs = generateForecastMetricsSchema.parse(args);
+        return {
+          content: [
+            { type: 'text', text: JSON.stringify(await generateForecastMetrics(generateForecastMetricsArgs), null, 2) },
+          ],
+        };
 
       // Ad Group tools
       case 'list_ad_groups':
