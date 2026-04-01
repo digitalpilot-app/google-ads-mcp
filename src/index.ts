@@ -22,6 +22,7 @@ import {
   generateKeywordHistoricalMetricsSchema,
   generateForecastMetricsSchema,
 } from './tools/keyword-planning.js';
+import { runGaql, runGaqlSchema } from './tools/gaql.js';
 
 const server = new Server(
   {
@@ -337,6 +338,29 @@ const workingTools = [
       required: ['campaign'],
     },
   },
+  {
+    name: 'run_gaql',
+    description:
+      'Execute a freeform Google Ads Query Language (GAQL) string for the customer. Response includes googleAdsApiVersion (RPC version) and googleAdsNodePackageVersion. Use LIMIT for large reports; prefer specialized listing tools when a dedicated tool exists.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...customerIdProp,
+        query: { type: 'string', description: 'Complete GAQL query (SELECT … FROM … WHERE …)' },
+        pageSize: {
+          type: 'number',
+          description:
+            'Optional. Page size when using paginated Search (needed for some queries that cannot use searchStream).',
+        },
+        returnTotalResultsCount: {
+          type: 'boolean',
+          description: 'Optional. Request total row count when the API supports it.',
+        },
+        returnSummaryRow: { type: 'boolean', description: 'Optional. Request summary row when applicable.' },
+      },
+      required: ['query'],
+    },
+  },
 ];
 
 const allTools = workingTools;
@@ -409,6 +433,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             { type: 'text', text: JSON.stringify(await generateForecastMetrics(generateForecastMetricsArgs), null, 2) },
           ],
         };
+
+      case 'run_gaql':
+        const runGaqlArgs = runGaqlSchema.parse(args);
+        return { content: [{ type: 'text', text: JSON.stringify(await runGaql(runGaqlArgs), null, 2) }] };
 
       // Ad Group tools
       case 'list_ad_groups':

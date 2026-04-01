@@ -154,8 +154,8 @@ export async function getCampaign(params: z.infer<typeof getCampaignSchema>) {
     status: campaign.campaign.status,
     servingStatus: campaign.campaign.serving_status,
     type: campaign.campaign.advertising_channel_type,
-    startDate: campaign.campaign.start_date,
-    endDate: campaign.campaign.end_date,
+    startDate: (campaign.campaign as { start_date?: string }).start_date,
+    endDate: (campaign.campaign as { end_date?: string }).end_date,
     optimizationScore: campaign.campaign.optimization_score,
     budget: {
       amount: campaign.campaign_budget?.amount_micros != null
