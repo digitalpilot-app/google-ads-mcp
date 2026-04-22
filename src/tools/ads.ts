@@ -4,6 +4,7 @@ import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { conversionRateFromMetrics } from '../metrics-helpers.js';
 import { customerIdOptional } from '../schema-common.js';
+import { throwGoogleAdsMutateError } from '../google-ads-error.js';
 
 export const listAdsSchema = z.object({
   adGroupId: z.string().optional(),
@@ -28,6 +29,10 @@ export const createResponsiveSearchAdSchema = z.object({
   finalMobileUrls: z.array(z.string()).optional(),
   trackingUrlTemplate: z.string().optional(),
 }).merge(customerIdOptional);
+
+export const createAdSchema = createResponsiveSearchAdSchema.extend({
+  adType: z.enum(['RESPONSIVE_SEARCH_AD']).optional().default('RESPONSIVE_SEARCH_AD'),
+});
 
 export const updateAdSchema = z.object({
   adId: z.string(),
@@ -170,8 +175,21 @@ export async function createResponsiveSearchAd(args: z.infer<typeof createRespon
       resourceName: result?.resource_name,
     };
   } catch (error) {
-    throw new Error(`Failed to create ad: ${error.message}`);
+    throwGoogleAdsMutateError(
+      {
+        operation: 'create_ad',
+        action: 'Failed to create ad',
+        customerId: client.credentials.customer_id,
+        request: args,
+      },
+      error
+    );
   }
+}
+
+export async function createAd(args: z.infer<typeof createAdSchema>) {
+  // Current implementation supports responsive search ads only.
+  return createResponsiveSearchAd(args);
 }
 
 export async function updateAd(args: z.infer<typeof updateAdSchema>) {
@@ -193,7 +211,15 @@ export async function updateAd(args: z.infer<typeof updateAdSchema>) {
       resourceName: response.results?.[0]?.resource_name,
     };
   } catch (error) {
-    throw new Error(`Failed to update ad: ${error.message}`);
+    throwGoogleAdsMutateError(
+      {
+        operation: 'update_ad',
+        action: 'Failed to update ad',
+        customerId: client.credentials.customer_id,
+        request: args,
+      },
+      error
+    );
   }
 }
 
@@ -289,6 +315,87 @@ export const adTools: Tool[] = [
           description: 'Include removed ads',
         },
       },
+    },
+  },
+  {
+    name: 'create_ad',
+    description: 'Create a new ad (currently supports responsive search ads)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        adType: {
+          type: 'string',
+          enum: ['RESPONSIVE_SEARCH_AD'],
+          description: 'Ad type to create (default: RESPONSIVE_SEARCH_AD)',
+        },
+        adGroupId: {
+          type: 'string',
+          description: 'Ad group ID where the ad will be created',
+        },
+        headlines: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              text: {
+                type: 'string',
+                description: 'Headline text (max 30 characters)',
+              },
+              pinned_field: {
+                type: 'number',
+                description: 'Position to pin this headline (1-3, optional)',
+              },
+            },
+            required: ['text'],
+          },
+          description: 'Headlines for the ad (3-15 headlines)',
+        },
+        descriptions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              text: {
+                type: 'string',
+                description: 'Description text (max 90 characters)',
+              },
+              pinned_field: {
+                type: 'number',
+                description: 'Position to pin this description (1-2, optional)',
+              },
+            },
+            required: ['text'],
+          },
+          description: 'Descriptions for the ad (2-4 descriptions)',
+        },
+        path1: {
+          type: 'string',
+          description: 'First path component (max 15 characters)',
+        },
+        path2: {
+          type: 'string',
+          description: 'Second path component (max 15 characters)',
+        },
+        finalUrls: {
+          type: 'array',
+          items: {
+            type: 'string',
+          },
+          description: 'Landing page URLs',
+        },
+        finalMobileUrls: {
+          type: 'array',
+          items: {
+            type: 'string',
+          },
+          description: 'Mobile landing page URLs (optional)',
+        },
+        trackingUrlTemplate: {
+          type: 'string',
+          description: 'Tracking URL template (optional)',
+        },
+      },
+      required: ['adGroupId', 'headlines', 'descriptions', 'finalUrls'],
     },
   },
   {

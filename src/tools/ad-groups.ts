@@ -3,6 +3,7 @@ import { resources } from 'google-ads-api';
 import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { customerIdOptional } from '../schema-common.js';
+import { throwGoogleAdsMutateError } from '../google-ads-error.js';
 
 export const listAdGroupsSchema = z.object({
   campaignId: z.string().optional(),
@@ -129,7 +130,15 @@ export async function createAdGroup(args: z.infer<typeof createAdGroupSchema>) {
       resourceName: result?.resource_name,
     };
   } catch (error) {
-    throw new Error(`Failed to create ad group: ${error.message}`);
+    throwGoogleAdsMutateError(
+      {
+        operation: 'create_ad_group',
+        action: 'Failed to create ad group',
+        customerId: client.credentials.customer_id,
+        request: args,
+      },
+      error
+    );
   }
 }
 
@@ -173,7 +182,15 @@ export async function updateAdGroup(args: z.infer<typeof updateAdGroupSchema>) {
       resourceName: response.results?.[0]?.resource_name,
     };
   } catch (error) {
-    throw new Error(`Failed to update ad group: ${error.message}`);
+    throwGoogleAdsMutateError(
+      {
+        operation: 'update_ad_group',
+        action: 'Failed to update ad group',
+        customerId: client.credentials.customer_id,
+        request: args,
+      },
+      error
+    );
   }
 }
 

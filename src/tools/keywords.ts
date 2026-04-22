@@ -4,6 +4,7 @@ import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { conversionRateFromMetrics, microsToUnits } from '../metrics-helpers.js';
 import { customerIdOptional } from '../schema-common.js';
+import { throwGoogleAdsMutateError } from '../google-ads-error.js';
 
 export const listKeywordsSchema = z.object({
   campaignId: z.string().optional(),
@@ -116,100 +117,136 @@ export async function listKeywords(params: z.infer<typeof listKeywordsSchema>) {
 
 export async function addKeywords(params: z.infer<typeof addKeywordsSchema>) {
   const customer = createGoogleAdsClient({ customerId: params.customerId });
-  
-  const cid = customer.credentials.customer_id;
-  const operations: resources.IAdGroupCriterion[] = params.keywords.map(keyword => ({
-    ad_group: `customers/${cid}/adGroups/${params.adGroupId}`,
-    status: 'ENABLED',
-    keyword: {
-      text: keyword.text,
-      match_type: keyword.matchType,
-    },
-    cpc_bid_micros: keyword.cpcBidMicros,
-  }));
-  
-  const response = await customer.adGroupCriteria.create(operations);
-  const rows = response.results ?? [];
-  
-  return {
-    success: true,
-    addedKeywords: rows.length,
-    keywords: rows.map((result, i) => ({
-      id: result.resource_name?.split('/').pop(),
-      text: params.keywords[i].text,
-      matchType: params.keywords[i].matchType,
-    })),
-  };
-}
 
-export async function addNegativeKeywords(params: z.infer<typeof addNegativeKeywordsSchema>) {
-  const customer = createGoogleAdsClient({ customerId: params.customerId });
-  
-  if (!params.campaignId && !params.adGroupId) {
-    throw new Error('Either campaignId or adGroupId must be provided');
-  }
-  
-  if (params.adGroupId) {
+  try {
     const cid = customer.credentials.customer_id;
     const operations: resources.IAdGroupCriterion[] = params.keywords.map(keyword => ({
       ad_group: `customers/${cid}/adGroups/${params.adGroupId}`,
       status: 'ENABLED',
-      negative: true,
       keyword: {
         text: keyword.text,
         match_type: keyword.matchType,
       },
+      cpc_bid_micros: keyword.cpcBidMicros,
     }));
     
     const response = await customer.adGroupCriteria.create(operations);
+    const rows = response.results ?? [];
     
     return {
       success: true,
-      level: 'ad_group',
-      addedKeywords: response.results?.length ?? 0,
+      addedKeywords: rows.length,
+      keywords: rows.map((result, i) => ({
+        id: result.resource_name?.split('/').pop(),
+        text: params.keywords[i].text,
+        matchType: params.keywords[i].matchType,
+      })),
     };
-  } else if (params.campaignId) {
-    const cid = customer.credentials.customer_id;
-    const operations: resources.ICampaignCriterion[] = params.keywords.map(keyword => ({
-      campaign: `customers/${cid}/campaigns/${params.campaignId}`,
-      negative: true,
-      keyword: {
-        text: keyword.text,
-        match_type: keyword.matchType,
+  } catch (error) {
+    throwGoogleAdsMutateError(
+      {
+        operation: 'add_keywords',
+        action: 'Failed to add keywords',
+        customerId: customer.credentials.customer_id,
+        request: params,
       },
-    }));
+      error
+    );
+  }
+}
+
+export async function addNegativeKeywords(params: z.infer<typeof addNegativeKeywordsSchema>) {
+  const customer = createGoogleAdsClient({ customerId: params.customerId });
+
+  try {
+    if (!params.campaignId && !params.adGroupId) {
+      throw new Error('Either campaignId or adGroupId must be provided');
+    }
     
-    const response = await customer.campaignCriteria.create(operations);
-    
-    return {
-      success: true,
-      level: 'campaign',
-      addedKeywords: response.results?.length ?? 0,
-    };
+    if (params.adGroupId) {
+      const cid = customer.credentials.customer_id;
+      const operations: resources.IAdGroupCriterion[] = params.keywords.map(keyword => ({
+        ad_group: `customers/${cid}/adGroups/${params.adGroupId}`,
+        status: 'ENABLED',
+        negative: true,
+        keyword: {
+          text: keyword.text,
+          match_type: keyword.matchType,
+        },
+      }));
+      
+      const response = await customer.adGroupCriteria.create(operations);
+      
+      return {
+        success: true,
+        level: 'ad_group',
+        addedKeywords: response.results?.length ?? 0,
+      };
+    } else if (params.campaignId) {
+      const cid = customer.credentials.customer_id;
+      const operations: resources.ICampaignCriterion[] = params.keywords.map(keyword => ({
+        campaign: `customers/${cid}/campaigns/${params.campaignId}`,
+        negative: true,
+        keyword: {
+          text: keyword.text,
+          match_type: keyword.matchType,
+        },
+      }));
+      
+      const response = await customer.campaignCriteria.create(operations);
+      
+      return {
+        success: true,
+        level: 'campaign',
+        addedKeywords: response.results?.length ?? 0,
+      };
+    }
+  } catch (error) {
+    throwGoogleAdsMutateError(
+      {
+        operation: 'add_negative_keywords',
+        action: 'Failed to add negative keywords',
+        customerId: customer.credentials.customer_id,
+        request: params,
+      },
+      error
+    );
   }
 }
 
 export async function updateKeyword(params: z.infer<typeof updateKeywordSchema>) {
   const customer = createGoogleAdsClient({ customerId: params.customerId });
-  
-  const updates: any = {};
-  
-  if (params.status !== undefined) {
-    updates.status = params.status;
+
+  try {
+    const updates: any = {};
+    
+    if (params.status !== undefined) {
+      updates.status = params.status;
+    }
+    
+    if (params.cpcBidMicros !== undefined) {
+      updates.cpc_bid_micros = params.cpcBidMicros;
+    }
+    
+    await customer.adGroupCriteria.update([
+      {
+        resource_name: `customers/${customer.credentials.customer_id}/adGroupCriteria/${params.adGroupId}~${params.keywordId}`,
+        ...updates,
+      } as resources.IAdGroupCriterion,
+    ]);
+    
+    return { success: true, keywordId: params.keywordId };
+  } catch (error) {
+    throwGoogleAdsMutateError(
+      {
+        operation: 'update_keyword',
+        action: 'Failed to update keyword',
+        customerId: customer.credentials.customer_id,
+        request: params,
+      },
+      error
+    );
   }
-  
-  if (params.cpcBidMicros !== undefined) {
-    updates.cpc_bid_micros = params.cpcBidMicros;
-  }
-  
-  await customer.adGroupCriteria.update([
-    {
-      resource_name: `customers/${customer.credentials.customer_id}/adGroupCriteria/${params.adGroupId}~${params.keywordId}`,
-      ...updates,
-    } as resources.IAdGroupCriterion,
-  ]);
-  
-  return { success: true, keywordId: params.keywordId };
 }
 
 export async function getKeywordPerformance(params: z.infer<typeof getKeywordPerformanceSchema>) {

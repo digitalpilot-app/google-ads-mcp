@@ -3,6 +3,7 @@ import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { conversionRateFromMetrics, microsToUnits } from '../metrics-helpers.js';
 import { customerIdOptional } from '../schema-common.js';
+import { throwGoogleAdsMutateError } from '../google-ads-error.js';
 
 export const listCampaignsSchema = z.object({
   limit: z.number().optional().default(50),
@@ -37,6 +38,10 @@ export const createCampaignSchema = z.object({
   budget: z.number(),
   advertisingChannelType: z.enum(['SEARCH', 'DISPLAY', 'SHOPPING', 'VIDEO', 'MULTI_CHANNEL']),
   status: z.enum(['ENABLED', 'PAUSED']).optional().default('PAUSED'),
+  containsEuPoliticalAdvertising: z
+    .enum(['DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING', 'CONTAINS_EU_POLITICAL_ADVERTISING'])
+    .optional()
+    .default('DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING'),
 }).merge(customerIdOptional);
 
 export const updateCampaignSchema = z.object({
@@ -177,84 +182,124 @@ export async function getCampaign(params: z.infer<typeof getCampaignSchema>) {
 
 export async function createCampaign(params: z.infer<typeof createCampaignSchema>) {
   const customer = createGoogleAdsClient({ customerId: params.customerId });
-  
-  const budgetResp = await customer.campaignBudgets.create([
-    {
-      name: `Budget for ${params.name}`,
-      amount_micros: params.budget * 1_000_000,
-      delivery_method: 'STANDARD',
-    },
-  ]);
+  const containsEuPoliticalAdvertising =
+    params.containsEuPoliticalAdvertising ?? 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING';
 
-  const budgetRn = budgetResp.results?.[0]?.resource_name;
-  if (!budgetRn) {
-    throw new Error('Campaign budget create returned no resource_name');
-  }
+  try {
+    const budgetResp = await customer.campaignBudgets.create([
+      {
+        // Keep budget names unique to avoid duplicate-name errors on retries.
+        name: `Budget for ${params.name} (${Date.now()})`,
+        amount_micros: params.budget * 1_000_000,
+        delivery_method: 'STANDARD',
+      },
+    ]);
 
-  const campaignResp = await customer.campaigns.create([
-    {
+    const budgetRn = budgetResp.results?.[0]?.resource_name;
+    if (!budgetRn) {
+      throw new Error('Campaign budget create returned no resource_name');
+    }
+
+    const biddingStrategy =
+      params.advertisingChannelType === 'SEARCH' || params.advertisingChannelType === 'DISPLAY'
+        ? { manual_cpc: { enhanced_cpc_enabled: false } }
+        : { maximize_conversions: {} };
+
+    const campaignResp = await customer.campaigns.create([
+      {
+        name: params.name,
+        status: params.status,
+        advertising_channel_type: params.advertisingChannelType,
+        campaign_budget: budgetRn,
+        contains_eu_political_advertising: containsEuPoliticalAdvertising,
+        ...biddingStrategy,
+      },
+    ]);
+
+    const campResult = campaignResp.results?.[0];
+    const campaignId =
+      campResult?.campaign?.id?.toString() ??
+      campResult?.resource_name?.split('/').pop();
+
+    return {
+      id: campaignId,
+      resourceName: campResult?.resource_name,
       name: params.name,
       status: params.status,
-      advertising_channel_type: params.advertisingChannelType,
-      campaign_budget: budgetRn,
-    },
-  ]);
-
-  const campResult = campaignResp.results?.[0];
-  const campaignId =
-    campResult?.campaign?.id?.toString() ??
-    campResult?.resource_name?.split('/').pop();
-
-  return {
-    id: campaignId,
-    resourceName: campResult?.resource_name,
-    name: params.name,
-    status: params.status,
-    budget: params.budget,
-  };
+      budget: params.budget,
+    };
+  } catch (error) {
+    throwGoogleAdsMutateError(
+      {
+        operation: 'create_campaign',
+        action: 'Failed to create campaign',
+        customerId: customer.credentials.customer_id,
+        request: {
+          name: params.name,
+          budget: params.budget,
+          advertisingChannelType: params.advertisingChannelType,
+          status: params.status,
+          containsEuPoliticalAdvertising,
+        },
+      },
+      error
+    );
+  }
 }
 
 export async function updateCampaign(params: z.infer<typeof updateCampaignSchema>) {
   const customer = createGoogleAdsClient({ customerId: params.customerId });
-  
-  const updates: any = {};
-  
-  if (params.name !== undefined) {
-    updates.name = params.name;
-  }
-  
-  if (params.status !== undefined) {
-    updates.status = params.status;
-  }
-  
-  if (params.budget !== undefined) {
-    const campaignQuery = `
-      SELECT campaign_budget.resource_name
-      FROM campaign
-      WHERE campaign.id = ${params.campaignId}
-    `;
-    const [campaign] = await customer.query(campaignQuery);
+
+  try {
+    const updates: any = {};
     
-    if (campaign?.campaign_budget?.resource_name) {
-      await customer.campaignBudgets.update([
+    if (params.name !== undefined) {
+      updates.name = params.name;
+    }
+    
+    if (params.status !== undefined) {
+      updates.status = params.status;
+    }
+    
+    if (params.budget !== undefined) {
+      const campaignQuery = `
+        SELECT campaign_budget.resource_name
+        FROM campaign
+        WHERE campaign.id = ${params.campaignId}
+      `;
+      const [campaign] = await customer.query(campaignQuery);
+      
+      if (campaign?.campaign_budget?.resource_name) {
+        await customer.campaignBudgets.update([
+          {
+            resource_name: campaign.campaign_budget.resource_name,
+            amount_micros: params.budget * 1_000_000,
+          },
+        ]);
+      }
+    }
+    
+    if (Object.keys(updates).length > 0) {
+      await customer.campaigns.update([
         {
-          resource_name: campaign.campaign_budget.resource_name,
-          amount_micros: params.budget * 1_000_000,
+          resource_name: `customers/${customer.credentials.customer_id}/campaigns/${params.campaignId}`,
+          ...updates,
         },
       ]);
     }
-  }
-  
-  if (Object.keys(updates).length > 0) {
-    await customer.campaigns.update([
+    
+    return { success: true, campaignId: params.campaignId };
+  } catch (error) {
+    throwGoogleAdsMutateError(
       {
-        resource_name: `customers/${customer.credentials.customer_id}/campaigns/${params.campaignId}`,
-        ...updates,
+        operation: 'update_campaign',
+        action: 'Failed to update campaign',
+        customerId: customer.credentials.customer_id,
+        request: params,
       },
-    ]);
+      error
+    );
   }
-  
-  return { success: true, campaignId: params.campaignId };
 }
 
 export const campaignTools: Tool[] = [
@@ -311,6 +356,11 @@ export const campaignTools: Tool[] = [
           type: 'string',
           enum: ['ENABLED', 'PAUSED'],
           description: 'Campaign status' 
+        },
+        containsEuPoliticalAdvertising: {
+          type: 'string',
+          enum: ['DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING', 'CONTAINS_EU_POLITICAL_ADVERTISING'],
+          description: 'Required policy declaration for EU political advertising',
         },
       },
       required: ['name', 'budget', 'advertisingChannelType'],

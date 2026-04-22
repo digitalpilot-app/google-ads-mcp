@@ -13,7 +13,7 @@ import { listCampaigns, createCampaign, updateCampaign, listCampaignsSchema, cre
 import { addKeywords, addNegativeKeywords, updateKeyword, addKeywordsSchema, addNegativeKeywordsSchema, updateKeywordSchema } from './tools/keywords.js';
 import { getSearchTermsReport, getSearchTermsReportSchema } from './tools/performance.js';
 import { listAdGroups, createAdGroup, updateAdGroup, getAdGroup, listAdGroupsSchema, createAdGroupSchema, updateAdGroupSchema, getAdGroupSchema } from './tools/ad-groups.js';
-import { listAds, listAdsSchema } from './tools/ads.js';
+import { createAd, createAdSchema, listAds, listAdsSchema } from './tools/ads.js';
 import {
   generateKeywordIdeas,
   generateKeywordHistoricalMetrics,
@@ -23,6 +23,7 @@ import {
   generateForecastMetricsSchema,
 } from './tools/keyword-planning.js';
 import { runGaql, runGaqlSchema } from './tools/gaql.js';
+import { formatGoogleAdsError, getGoogleAdsErrorDetails } from './google-ads-error.js';
 
 const server = new Server(
   {
@@ -73,6 +74,11 @@ const workingTools = [
           description: 'Campaign type' 
         },
         status: { type: 'string', enum: ['ENABLED', 'PAUSED'], description: 'Campaign status' },
+        containsEuPoliticalAdvertising: {
+          type: 'string',
+          enum: ['DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING', 'CONTAINS_EU_POLITICAL_ADVERTISING'],
+          description: 'Required policy declaration for EU political advertising',
+        },
       },
       required: ['name', 'budget', 'advertisingChannelType'],
     },
@@ -159,6 +165,50 @@ const workingTools = [
         limit: { type: 'number', description: 'Maximum number of ads to return' },
         includeRemoved: { type: 'boolean', description: 'Include removed ads' },
       },
+    },
+  },
+  {
+    name: 'create_ad',
+    description: 'Create a new ad (currently responsive search ads)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...customerIdProp,
+        adType: {
+          type: 'string',
+          enum: ['RESPONSIVE_SEARCH_AD'],
+          description: 'Ad type to create (default: RESPONSIVE_SEARCH_AD)',
+        },
+        adGroupId: { type: 'string', description: 'Ad group ID' },
+        headlines: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              text: { type: 'string', description: 'Headline text (max 30 chars)' },
+              pinned_field: { type: 'number', description: 'Pinned position (optional)' },
+            },
+            required: ['text'],
+          },
+        },
+        descriptions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              text: { type: 'string', description: 'Description text (max 90 chars)' },
+              pinned_field: { type: 'number', description: 'Pinned position (optional)' },
+            },
+            required: ['text'],
+          },
+        },
+        path1: { type: 'string', description: 'Path 1 (optional)' },
+        path2: { type: 'string', description: 'Path 2 (optional)' },
+        finalUrls: { type: 'array', items: { type: 'string' }, description: 'Final URLs' },
+        finalMobileUrls: { type: 'array', items: { type: 'string' }, description: 'Final mobile URLs' },
+        trackingUrlTemplate: { type: 'string', description: 'Tracking URL template' },
+      },
+      required: ['adGroupId', 'headlines', 'descriptions', 'finalUrls'],
     },
   },
   {
@@ -459,6 +509,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'list_ads':
         const listAdsArgs = listAdsSchema.parse(args);
         return { content: [{ type: 'text', text: JSON.stringify(await listAds(listAdsArgs), null, 2) }] };
+      case 'create_ad':
+        const createAdArgs = createAdSchema.parse(args);
+        return { content: [{ type: 'text', text: JSON.stringify(await createAd(createAdArgs), null, 2) }] };
 
 
 
@@ -470,8 +523,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (error instanceof McpError) {
       throw error;
     }
-    
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+
+    const errorMessage = formatGoogleAdsError(error);
+    console.error(`[tool:${name}] execution failed`, {
+      args,
+      error: getGoogleAdsErrorDetails(error),
+      message: errorMessage,
+    });
     throw new McpError(ErrorCode.InternalError, `Tool execution failed: ${errorMessage}`);
   }
 });

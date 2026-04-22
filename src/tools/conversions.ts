@@ -3,6 +3,7 @@ import { resources } from 'google-ads-api';
 import { createGoogleAdsClient } from '../google-ads-client.js';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { customerIdOptional } from '../schema-common.js';
+import { throwGoogleAdsMutateError } from '../google-ads-error.js';
 
 export const listConversionActionsSchema = z.object({
   includeRemoved: z.boolean().optional().default(false),
@@ -154,7 +155,15 @@ export async function createConversionAction(args: z.infer<typeof createConversi
       resourceName: result?.resource_name,
     };
   } catch (error) {
-    throw new Error(`Failed to create conversion action: ${error.message}`);
+    throwGoogleAdsMutateError(
+      {
+        operation: 'create_conversion_action',
+        action: 'Failed to create conversion action',
+        customerId: client.credentials.customer_id,
+        request: args,
+      },
+      error
+    );
   }
 }
 
@@ -208,7 +217,15 @@ export async function updateConversionAction(args: z.infer<typeof updateConversi
       resourceName: response.results?.[0]?.resource_name,
     };
   } catch (error) {
-    throw new Error(`Failed to update conversion action: ${error.message}`);
+    throwGoogleAdsMutateError(
+      {
+        operation: 'update_conversion_action',
+        action: 'Failed to update conversion action',
+        customerId: client.credentials.customer_id,
+        request: args,
+      },
+      error
+    );
   }
 }
 
